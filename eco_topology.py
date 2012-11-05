@@ -225,6 +225,7 @@ class Switch(EventMixin):
 
         packet = event.parsed
 
+        # loc = (swutch, port)
         loc = (self,event.port)
         oldloc = mac_map.get(packet.src)
 
@@ -338,11 +339,11 @@ class eco_topology(EventMixin):
 		eco_topo.remove_edge(*logaical_edge[0])
         
     def _handle_ConnectionUp(self, event):
-        sw = topo.node[event.dpid]['switch']
+        sw = topo.node[dpidToStr(event.dpid)]['switch']
         if sw is None:
             # New Switch
             sw = Switch()
-            topo.add_node(event.dpid,switch=sw)
+            topo.add_node(dpidToStr(event.dpid),switch=sw)
             sw.connect(event.connection)
         else:
             sw.connect(event.connection)
