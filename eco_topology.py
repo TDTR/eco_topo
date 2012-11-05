@@ -23,6 +23,7 @@ This Program is prototype of master thesis toru-tu@naist
 Dependes on openflow.discovery
 Works with openflow.spanning_tree
 
+Bug fix 
 """
 
 from pox.core import core
