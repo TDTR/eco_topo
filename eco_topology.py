@@ -23,7 +23,7 @@ This Program is prototype of master thesis toru-tu@naist
 Dependes on openflow.discovery
 Works with openflow.spanning_tree
 
-Bug fix 
+bug fix 
 """
 
 from pox.core import core
@@ -32,6 +32,7 @@ from pox.lib.revent import *
 from collections import defaultdict
 from pox.openflow.discovery import Discovery
 from pox.lib.util import dpidToStr
+from pox.lib.util import strToDPID
 import networkx as nx
 
 log = core.getLogger()
@@ -39,7 +40,7 @@ log = core.getLogger()
 topo = nx.MultiGraph()
 
 # logaical topology graph
-ecp_topo = nx.MultiGraph()
+eco_topo = nx.MultiGraph()
 
 # ethaddr -> (switch,port)
 mac_map = {}
@@ -65,14 +66,14 @@ def _calc_packing(p):
     return (BANDWIDTH -contention)
 
 def _get_raw_path(src,dst):
-    shortest_path_len = nx.dijkstra_path_length(eco_topo,src,dst)
+    shortest_path_len = nx.dijkstra_path_length(eco_topo,dpidToStr(src.dpid),dpidToStr(dst.dpid))
     # get path list
-    path_list = list(nx.all_simple_paths(eco_topo, source=src,
-                                         target=dst, cutoff= shortest_path_len+1))
+    path_list = list(nx.all_simple_paths(eco_topo, source=dpidToStr(src.dpid),
+                                         target=dpidToStr(dst.dpid), cutoff= shortest_path_len+1))
     # get max contention value
     bin_content =[]
     for i in range(len(path_list)):
-        bin_content.append(_calc_packing(path))
+        bin_content.append(_calc_packing(path_list[i]))
 
     # get max content index list
     index =[]
@@ -90,7 +91,7 @@ def _get_raw_path(src,dst):
             hop_list.append(len(path_list[i]))
         
         # return min number of hops path_list
-        # カウンタの値を参照する場合はここをいじるべき
+        # カウンタの値を参照する場合はここをいじる
         return path_list[hop_list[hop_list.index(min(hop_list))]]
     
 
@@ -101,12 +102,14 @@ def _check_path(p):
     return True
 
 def _get_path(src,dst,final_port):
+    global f_id
     if src == dst:
         path = [src]
     else:
+        # path <- return path list src to dst express str(dpid)
         path = _get_raw_path(src, dst)
         if path is None: return None
-        path = [src] + path + [dst]
+        # path = [src] + path + [dst]
         print "raw:        ",path
 
     r = []
@@ -119,7 +122,7 @@ def _get_path(src,dst,final_port):
         
     r.append((dst, final_port))
 
-    assert _check_path(r)
+    #assert _check_path(r)
 
     return r
     
@@ -155,13 +158,14 @@ class Switch(EventMixin):
 
     def _install_path(self, p, match, buffer_id=-1):
         for sw,port in p[1:]:
-            self._install(sw, port,match)
+            self._install(sw, port, match)
 
         self._install(p[0][0],p[0][1], match, buffer_id)
 
         core.eco_topology.raiseEvent(PathInstalled(p))
 
     def install_path(self, dst_sw, last_port, match, event):
+        # dst_sw is switch instance
         p = _get_path(self,dst_sw,last_port)
         if p is None:
             log.warning("Can't get from %s to %s", match.dl_src, match.dl_dst)
@@ -207,6 +211,7 @@ class Switch(EventMixin):
                   match.dl_src,match.dl_dst,match.dl_type,len(p))
     
     def _handle_PacketIn(self, event):
+        global f_id
         def flood():
             """ Flooding the packet"""
             msg = of.ofp_packet_out()
@@ -226,7 +231,7 @@ class Switch(EventMixin):
 
         packet = event.parsed
 
-        # loc = (swutch, port)
+        # loc = (switch, port)
         loc = (self,event.port)
         oldloc = mac_map.get(packet.src)
 
@@ -241,7 +246,9 @@ class Switch(EventMixin):
                 log.debug("Learned %s at %s.%i",packet.src, loc[0],loc[1])
         elif oldloc != loc:
             # ethaddr seen at different place
-            if eco_topo[loc[0]].has_key(loc[1]):
+            # eco_topo[] is MultiGraph().neighbors(n)
+            # input: node Returns: list node 
+            if eco_topo[dpidToStr(loc[0].dpid)].has_key(dpidToStr(loc[1].dpid))==True:
                 # New place is another plain port (probably)
                 log.debug("%s moved from %s.%i to %s.%i?", packet.src,
                           dpidToStr(oldloc[0].connection.dpid), oldloc[1],
@@ -281,10 +288,10 @@ class Switch(EventMixin):
 
         if self.ports is None:
             self.ports = connection.features.ports
-        self.Disconnect()
+        self.disconnect()
         log.debug("Connect %s" % (connection,))
         self.connection = connection
-        self._listeners = self.list(connection)
+        self._listeners = self.listenTo(connection)
 
     def _handle_ConnectionDown(self, event):
         self.disconnect()
@@ -304,49 +311,57 @@ class eco_topology(EventMixin):
             return Discovery.Link(link[2],link[3], link[0],link[1])
 
         l = event.link
+        string_dpid1 = dpidToStr(l.dpid1)
+        string_dpid2 = dpidToStr(l.dpid2)
 
         # clear all entry of switch
         clear = of.ofp_flow_mod(match=of.ofp_match(),command=of.OFPFC_DELETE)
+        # index = str(dpid) , sw=Switch 
         for index,sw in topo.nodes_iter(data=True):
-            sw.values().connection.send(clear)
+            sw.values()[0].connection.send(clear)
         flow_map.clear()
-
+        
         if event.removed:
-            if l.dpid2 in topo[l.dpid1]: topo.remove_edge(l.dpid1,l.dpid2)
-            if l.dpid1 in topo[l.dpid2]: topo.remove_edge(l.dpid2,l.dpid1)
+            if l.dpid2 in topo[string_dpid1]:
+                topo.remove_edge(string_dpid1, string_dpid2)
+            if l.dpid1 in topo[string_dpid2]:
+                topo.remove_edge(string_dpid2, string_dpid1)
 
             for ll in core.openflow_discovery.adjacency:
                 if ll.dpid1 == l.dpid1 and ll.dpid2 == l.dpid2:
                     if flip(ll) in core.openflow_discovery.adjacency:
-                        topo.add_edge(l.dpid1,l.dpid2,key='go',port=ll.port1)
-                        topo.add_edge(l.dpid2,l.dpid1,key='back',port=ll.port2)
+                        topo.add_edge(string_dpid1, string_dpid2, key='go',port=ll.port1)
+                        topo.add_edge(string_dpid2, string_dpid1,key='back',port=ll.port2)
                         break
         else:
             # もし、既に接続済みなら無視できる
             # 未接続ならば、
-            if topo.has_edge(l.dpid1,l.dpid2) == False:
+            if topo.has_edge(string_dpid1, string_dpid2) == False:
                 if flip(l) in core.openflow_discovery.adjacency:
-                    topo.add_edge(l.dpid1,l.dpid2,key='go',port=l.port1)
-                    topo.add_edge(l.dpid1,l.dpid2,key='back',port=l.port2)
+                    topo.add_edge(string_dpid1, string_dpid2, key='go',port=l.port1)
+                    topo.add_edge(string_dpid1, string_dpid2, key='back',port=l.port2)
 
         # create eco topology
         # TODO debug
         eco_topo = nx.minimum_spanning_tree(topo)
         for n in eco_topo.nodes_iter():
             physical_edge = topo.edges(n)
-            logical_edge = ecp_topo.edges(n)
+            logical_edge = eco_topo.edges(n)
             # fat treeからトポロジを吸収していく
-            if(len(physical_edge) == 4 and len(logaical_edge)==1):
-		eco_topo.remove_edge(*logaical_edge[0])
+            if(len(physical_edge) == 4 and len(logical_edge)==1):
+		eco_topo.remove_edge(*logical_edge[0])
         
     def _handle_ConnectionUp(self, event):
-        sw = topo.node[dpidToStr(event.dpid)]['switch']
-        if sw is None:
+        str_event_dpid = dpidToStr(event.dpid)
+        if topo.has_node(str_event_dpid) == False:
+            log.debug("hoge")
             # New Switch
             sw = Switch()
-            topo.add_node(dpidToStr(event.dpid),switch=sw)
+            topo.add_node(str_event_dpid,switch=sw)
             sw.connect(event.connection)
         else:
+            log.debug("event dpid is %s", str_event_dpid)
+            sw = topo.node[str_event_dpid]['switch']
             sw.connect(event.connection)
 
 def launch():
