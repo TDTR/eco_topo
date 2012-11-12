@@ -33,6 +33,7 @@ from collections import defaultdict
 from pox.openflow.discovery import Discovery
 from pox.lib.util import dpidToStr
 from pox.lib.util import strToDPID
+from PathInstalled import *
 import networkx as nx
 
 log = core.getLogger()
@@ -138,15 +139,6 @@ def _get_path(src,dst,final_port):
 
     return r
     
-class PathInstalled(Event):
-    """
-    Fired when a path is installed
-    """
-    def __init__(self,path):
-        Event.__init__(self)
-        self.path = path
-
-
 class Switch(EventMixin):
     def __init__(self):
         self.connection = None
@@ -176,7 +168,8 @@ class Switch(EventMixin):
         src_sw= eco_topo.node[p[0][0]]['switch']
         self._install(src_sw,p[0][1], match, buffer_id)
 
-        core.eco_topology.raiseEvent(PathInstalled(p))
+        event = PathInstalled(p)
+        core.eco_topology.raiseEvent(event)
 
     def install_path(self, dst_sw, last_port, match, event):
         # dst_sw is switch instance
