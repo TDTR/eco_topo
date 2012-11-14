@@ -5,7 +5,7 @@
 #
 # This file is part of POX.
 #
-# POX is free software: you can redistribute it and/or modify
+#l POX is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
@@ -35,8 +35,18 @@ from pox.lib.util import dpidToStr
 from pox.lib.util import strToDPID
 from PathInstalled import *
 import networkx as nx
+import threading
+import time
+import logging
+import logging.config
+from monitor_thread import *
+
+#LOGGING_CONF = '/home/toru-tu/script/log.conf'
+#logging.config.fileConfig(LOGGING_CONF)
+#logger1 = logging.getLogger("app")
 
 log = core.getLogger()
+
 # physical topology graph 
 ##topo = nx.MultiGraph()
 topo = nx.DiGraph()
@@ -51,6 +61,9 @@ mac_map = {}
 # bin packing map [sw1][sw2]->[flow id]
 ## ToDo 作り直し
 content_map = defaultdict(lambda:defaultdict(lambda:list()))
+
+# monitor
+monitor = None
 
 # flow_id
 f_id = -1
@@ -76,6 +89,13 @@ def _get_raw_path(src,dst):
     # get path list
     path_list = list(nx.all_simple_paths(eco_topo, source=dpidToStr(src.dpid),
                                          target=dpidToStr(dst.dpid), cutoff= shortest_path_len+1))
+
+    if len(path_list) == 0:
+        shortest_path_len = nx.dijkstra_path_length(topo,dpidToStr(src.dpid),dpidToStr(dst.dpid))
+        path_list = list(nx.all_simple_paths(topo, source=dpidToStr(src.dpid),
+                                         target=dpidToStr(dst.dpid), cutoff= shortest_path_len+1))
+        # pathの違いを見て、そのルートを追加する必要がある
+    
     # get max contention value
     bin_content =[]
     for i in range(len(path_list)):
@@ -97,15 +117,34 @@ def _get_raw_path(src,dst):
             hop_list.append(len(path_list[i]))
         
         # return min number of hops path_list
-        # カウンタの値を参照する場合はここをいじる
+        ## TODO
+        # カウンタの値を参照してさらに分岐する場合
         return path_list[hop_list[hop_list.index(min(hop_list))]]
     
 
-def _check_path(p):
+def _check_path(src,dst):
     global eco_topo
-    for i in range(len(p) -1 ):
-        if eco_topo[p[i][0]][p[i+1][0]] != p[i][1]:
-            return False
+    global topo
+
+    if eco_topo.has_edge(src,dst) == False:
+        if topo.has_edge(src,dst) == False : return False
+        else:
+            forward_port = topo[src][dst]['port']
+            back_port = topo[dst][src]['port']
+            eco_topo.add_edge(src, dst, port = forward_port)
+            eco_topo.add_edge(dst, src, port = back_port)
+    return True
+    
+
+def _check_switch(p):
+    global eco_topo
+    global topo
+    for i in range(len(p) -1):
+        if eco_topo.has_node(p[i]) is False:
+            if topo.has_node(p[i]) is False : return False
+            else:
+                sw_instance = topo.node[p[i]]
+                eco_topo.add_node(p[i],sw_instance)
     return True
 
 def _get_path(src,dst,final_port):
@@ -121,11 +160,13 @@ def _get_path(src,dst,final_port):
         path = _get_raw_path(src, dst)
         if path is None: return None
         #path = [src] + path + [dst]
-        print "raw:        ",path
-
+        log.info("raw:        ",path)
+        
+    assert _check_switch(path)
     r = []
     
     for s1,s2 in zip(path[:-1],path[1:]):
+        assert _check_path(s1,s2)
         ## 怪しい only one switch の場合エラーl
         #port = eco_topo[s1][s2].values
         port = eco_topo[s1][s2]['port']
@@ -135,7 +176,7 @@ def _get_path(src,dst,final_port):
     
     r.append((path[-1], final_port))
 
-    #assert _check_path(r)
+    #    assert _check_path(r)
 
     return r
     
@@ -358,8 +399,8 @@ class eco_topology(EventMixin):
             if topo.has_edge(string_dpid1, string_dpid2) == False:
                 if flip(l) in core.openflow_discovery.adjacency:
                     #topo.add_edge(string_dpid1, string_dpid2, key='go'port=l.port1)
-                    topo.add_edge(string_dpid1, string_dpid2, port=l.port1)
                     #topo.add_edge(string_dpid1, string_dpid2, key='back',port=l.port2)
+                    topo.add_edge(string_dpid1, string_dpid2, port=l.port1)
                     topo.add_edge(string_dpid2, string_dpid1, port=l.port2)
 
         # create eco topology
@@ -367,6 +408,8 @@ class eco_topology(EventMixin):
         temp1 = nx.Graph(topo)
         temp2 = nx.minimum_spanning_tree(temp1)
         eco_topo = nx.DiGraph(temp2)
+        monitor.notify_logical_instance(eco_topo)
+        
         for e in topo.edges_iter():
             if (topo.has_edge(e[0],e[1]) == True and eco_topo.has_edge(e[0],e[1]) == True):
                 if(topo[e[0]][e[1]]['port'] == eco_topo[e[0]][e[1]]['port']) == False:
@@ -377,17 +420,20 @@ class eco_topology(EventMixin):
         #print eco_topo.node
         #print 'topo:', topo.edge
         #print 'eco:', eco_topo.edge
+        remove_node = []
         for n in eco_topo.nodes_iter():
             physical_edge = topo.edges(n)
             logical_edge = eco_topo.edges(n)
             # fat treeからトポロジを吸収していく
             if(len(physical_edge) == 4 and len(logical_edge)==1):
 		eco_topo.remove_edge(*logical_edge[0])
-        
+                remove_node.append(n)
+        for n in remove_node:
+            eco_topo.remove_node(n)
+                
     def _handle_ConnectionUp(self, event):
         str_event_dpid = dpidToStr(event.dpid)
         if topo.has_node(str_event_dpid) == False:
-            log.debug("hoge")
             # New Switch
             sw = Switch()
             topo.add_node(str_event_dpid,switch=sw)
@@ -399,9 +445,14 @@ class eco_topology(EventMixin):
             sw.connect(event.connection)
 
 def launch():
+    global eco_topo
+    global topo
+    global monitor
     if 'openflow_discovery' not in core.components:
         import pox.openflow.Discovery as discovery
         core.registerNew(discovery.Discovery)
 
     core.registerNew(eco_topology)
+    monitor = monitor_thread(log,eco_topo,topo,5)
+    monitor.start()
 
