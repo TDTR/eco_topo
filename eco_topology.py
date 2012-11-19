@@ -30,7 +30,8 @@ from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from pox.lib.revent import *
 from collections import defaultdict
-from pox.openflow.discovery import Discovery
+#from pox.openflow.discovery import Discovery
+from eco_discovery import Discovery
 from pox.lib.util import dpidToStr
 from pox.lib.util import strToDPID
 from PathInstalled import *
@@ -71,29 +72,32 @@ f_id = -1
 flow_map = {}
 
 BANDWIDTH = 1000
-ITEM_SIZE = 5
+ITEM_SIZE = 10
 IDLE_TIMEOUT = 1000
 HARD_TIMEOUT = 3000
 
 def _calc_packing(p):
-    contention = 0
+    contention = []
     for s1,s2 in zip(p[:-1],p[1:]):
-        contention += sum(content_map[s1][s2])
-    return (BANDWIDTH -contention)
+        f_list = map(int,content_map[s1][s2])
+        contention.append(len(f_list) * ITEM_SIZE)
+        #        for f in f_list:
+        #            contention += int(flow_map[f])
+    return (BANDWIDTH -max(contention))
 
 def _get_raw_path(src,dst):
-    global eco_topo
-
-    # print src,dst
-    shortest_path_len = nx.dijkstra_path_length(eco_topo,dpidToStr(src.dpid),dpidToStr(dst.dpid))
-    # get path list
-    path_list = list(nx.all_simple_paths(eco_topo, source=dpidToStr(src.dpid),
-                                         target=dpidToStr(dst.dpid), cutoff= shortest_path_len+1))
-
-    if len(path_list) == 0:
+    def get_path_list(topo,src,dst):
         shortest_path_len = nx.dijkstra_path_length(topo,dpidToStr(src.dpid),dpidToStr(dst.dpid))
-        path_list = list(nx.all_simple_paths(topo, source=dpidToStr(src.dpid),
-                                         target=dpidToStr(dst.dpid), cutoff= shortest_path_len+1))
+        path = list(nx.all_simple_paths(topo,source=dpidToStr(src.dpid),
+                                             target=dpidToStr(dst.dpid), cutoff = shortest_path_len+2))
+        return path
+
+    global eco_topo
+    global topo
+    
+    path_list = get_path_list(eco_topo,src,dst)
+    if len(path_list) == 0:
+        path_list = get_path_list(topo,src,dst)
         # pathの違いを見て、そのルートを追加する必要がある
     
     # get max contention value
@@ -101,11 +105,20 @@ def _get_raw_path(src,dst):
     for i in range(len(path_list)):
         bin_content.append(_calc_packing(path_list[i]))
 
+    log.debug("bin_content = %s" % bin_content)
+    # max == 0
+    if max(bin_content) < 0:
+        log.info("I need more capacity")
+        path_list = get_path_list(topo,src,dst)
+        bin_content =[]
+        for i in range(len(path_list)):
+            bin_content.append(_calc_packing(path_list[i]))
+            
     # get max content index list
     index =[]
     for i,v in enumerate(bin_content):
         if(v == max(bin_content)):index.append(i)
-
+    
     if len(index) == 1:
         # if max contention path is only 1!
         return path_list[index[0]]
@@ -119,16 +132,21 @@ def _get_raw_path(src,dst):
         # return min number of hops path_list
         ## TODO
         # カウンタの値を参照してさらに分岐する場合
-        return path_list[hop_list[hop_list.index(min(hop_list))]]
+        #return path_list[hop_list[hop_list.index(min(hop_list))]]
+        return path_list[index[hop_list.index(min(hop_list))]]
     
 
 def _check_path(src,dst):
     global eco_topo
     global topo
-
+    #log.debug("%s %s In _check_path!!!0" % (src,dst))
     if eco_topo.has_edge(src,dst) == False:
-        if topo.has_edge(src,dst) == False : return False
+        #log.debug("In _check_path!!!1")
+        if topo.has_edge(src,dst) == False :
+            #log.debug("In _check_path!!!2")
+            return False
         else:
+            log.debug("In _check_path!!!3")
             forward_port = topo[src][dst]['port']
             back_port = topo[dst][src]['port']
             eco_topo.add_edge(src, dst, port = forward_port)
@@ -150,6 +168,7 @@ def _check_switch(p):
 def _get_path(src,dst,final_port):
     global f_id
     global eco_topo
+    global topo
 
     #print '_get_path', src,dst,final_port
 
@@ -160,14 +179,21 @@ def _get_path(src,dst,final_port):
         path = _get_raw_path(src, dst)
         if path is None: return None
         #path = [src] + path + [dst]
-        log.info("raw:        ",path)
+        ###log.info("raw:        ",path)
         
-    assert _check_switch(path)
+    if _check_switch(path)==False:
+        exit 
     r = []
     
     for s1,s2 in zip(path[:-1],path[1:]):
-        assert _check_path(s1,s2)
-        ## 怪しい only one switch の場合エラーl
+        #if eco_topo.has_edge(s1,s2) == False and topo.has_edge(s1,s2) == True :
+        #    forward_port = topo[s1][s2]['port']
+        #    back_port = topo[s1][s2]['port']
+        #    eco_topo.add_edge(s1, s2, port = forward_port)
+        #    eco_topo.add_edge(s2, s1, port = back_port)
+
+        if _check_path(s1,s2) == False: exit 
+        ## 怪しい only one switch の場合エラー
         #port = eco_topo[s1][s2].values
         port = eco_topo[s1][s2]['port']
         r.append((s1,port))
@@ -255,7 +281,7 @@ class Switch(EventMixin):
 
             return
 
-        print 'will install this path:',p
+        log.debug('will install this path:%s' %p)
         self._install_path(p,match,event.ofp.buffer_id)
         log.debug("Installing path for %s -> %s %04x (%i hops)",
                   match.dl_src,match.dl_dst,match.dl_type,len(p))
@@ -291,7 +317,7 @@ class Switch(EventMixin):
             drop()
             return
         
-        print packet.src,packet.dst,"*",loc,oldloc
+        log.debug("packet:src= %s packet:dst= %s / (loc,oldloc)= (%s,%s) ",packet.src,packet.dst,loc,oldloc)
         
         if oldloc is None:
             if packet.src.isMulticast() == False:
@@ -327,6 +353,7 @@ class Switch(EventMixin):
                 dest = mac_map[packet.dst]
                 match = of.ofp_match.from_packet(packet)
                 flow_map[f_id]=ITEM_SIZE
+                log.debug('f_id %d ITEM_SIZE=%d' % (f_id,flow_map[f_id]))
                 self.install_path(dest[0],dest[1],match,event)
         
     def disconnect(self):
@@ -438,7 +465,7 @@ class eco_topology(EventMixin):
             sw = Switch()
             topo.add_node(str_event_dpid,switch=sw)
             sw.connect(event.connection)
-            print topo.node
+            log.debug("node %s" % topo.node)
         else:
             log.debug("event dpid is %s", str_event_dpid)
             sw = topo.node[str_event_dpid]['switch']

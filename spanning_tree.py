@@ -27,8 +27,9 @@ def launch (forwarding = "eco"):
   pox.log.launch(format="[@@@bold@@@level%(name)-22s@@@reset] " +
                         "@@@bold%(message)s@@@normal")
   from pox.core import core
-  import pox.openflow.discovery
-  pox.openflow.discovery.launch()
+  #import pox.openflow.discovery
+  import eco_discovery
+  eco_discovery.launch()
 
   core.getLogger("openflow.spanning_tree").setLevel("INFO")
   if forwarding.lower() == "l3":
