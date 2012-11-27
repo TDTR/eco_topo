@@ -29,8 +29,10 @@ master
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
 from pox.lib.revent import *
+from pox.lib.recoco import Timer
 from collections import defaultdict
 #from pox.openflow.discovery import Discovery
+from eco_flow_table import FlowTable
 from eco_discovery import Discovery
 from pox.lib.util import dpidToStr
 from pox.lib.util import strToDPID
@@ -64,7 +66,7 @@ mac_map = {}
 content_map = defaultdict(lambda:defaultdict(lambda:list()))
 
 # monitor
-monitor = None
+monitor  = None
 
 # flow_id
 f_id = -1
@@ -72,9 +74,9 @@ f_id = -1
 flow_map = {}
 
 BANDWIDTH = 1000
-ITEM_SIZE = 10
-IDLE_TIMEOUT = 1000
-HARD_TIMEOUT = 3000
+ITEM_SIZE = 5
+IDLE_TIMEOUT = 10
+HARD_TIMEOUT = 20
 
 def _calc_packing(p):
     contention = []
@@ -165,6 +167,13 @@ def _check_switch(p):
                 eco_topo.add_node(p[i],sw_instance)
     return True
 
+def handle_timeout(**kw):
+    global content_map
+    log.debug("delete f_map %s->%s:%d" % (kw['sw1'],kw['sw2'],kw['f']))
+    log.debug("f's type is %s"% type(kw['f']))
+    # content_map[s1][s2]==f_id を消す
+    content_map[kw['sw1']][kw['sw2']].remove(kw['f'])
+    
 def _get_path(src,dst,final_port):
     global f_id
     global eco_topo
@@ -199,12 +208,16 @@ def _get_path(src,dst,final_port):
         r.append((s1,port))
         content_map[s1][s2].append(f_id)
         content_map[s2][s1].append(f_id)
-    
+       # Timer(HARD_TIMEOUT, handle_timeout, kw={})
+        Timer(HARD_TIMEOUT, handle_timeout, kw={'f':f_id,'sw1':s1,'sw2':s2})
+        Timer(HARD_TIMEOUT, handle_timeout, kw={'f':f_id,'sw1':s2,'sw2':s1})
+       
     r.append((path[-1], final_port))
 
     #    assert _check_path(r)
 
     return r
+
     
 class Switch(EventMixin):
     def __init__(self):
@@ -215,6 +228,9 @@ class Switch(EventMixin):
 
     def __repr__(self):
         return dpidToStr(self.dpid)
+
+        
+        
 
     def _install(self,switch,port,match,buf=-1):
         # install switch flow_table
@@ -305,8 +321,8 @@ class Switch(EventMixin):
                 msg.buffer_id = event.ofp.buffer_id
                 event.ofp.buffer_id = -1
                 msg.in_port = event.port
-                self.connection.send(msg)
-
+                self.connection.send(msg)            
+            
         packet = event.parsed
 
         # loc = (switch, port)
@@ -355,6 +371,7 @@ class Switch(EventMixin):
                 flow_map[f_id]=ITEM_SIZE
                 log.debug('f_id %d ITEM_SIZE=%d' % (f_id,flow_map[f_id]))
                 self.install_path(dest[0],dest[1],match,event)
+                
         
     def disconnect(self):
         if self.connection is not None:
@@ -377,6 +394,9 @@ class Switch(EventMixin):
 
     def _handle_ConnectionDown(self, event):
         self.disconnect()
+
+    def _handle_FlowRemoved(self,event):
+        print "_FlowRemoved! %s" % event.ofp.reason
 
 class eco_topology(EventMixin):
     global topo
@@ -452,7 +472,7 @@ class eco_topology(EventMixin):
             physical_edge = topo.edges(n)
             logical_edge = eco_topo.edges(n)
             # fat treeからトポロジを吸収していく
-            if(len(physical_edge) == 4 and len(logical_edge)==1):
+            if(len(physical_edge) == 6 and len(logical_edge)==1):
 		eco_topo.remove_edge(*logical_edge[0])
                 remove_node.append(n)
         for n in remove_node:
@@ -475,6 +495,7 @@ def launch():
     global eco_topo
     global topo
     global monitor
+    global monitor2
     if 'openflow_discovery' not in core.components:
         import pox.openflow.Discovery as discovery
         core.registerNew(discovery.Discovery)
