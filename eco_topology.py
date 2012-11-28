@@ -148,7 +148,7 @@ def _check_path(src,dst):
             #log.debug("In _check_path!!!2")
             return False
         else:
-            log.debug("In _check_path!!!3")
+            #log.debug("In _check_path!!!3")
             forward_port = topo[src][dst]['port']
             back_port = topo[dst][src]['port']
             eco_topo.add_edge(src, dst, port = forward_port)
@@ -162,9 +162,24 @@ def _check_switch(p):
     for i in range(len(p) -1):
         if eco_topo.has_node(p[i]) is False:
             if topo.has_node(p[i]) is False : return False
-            else:
-                sw_instance = topo.node[p[i]]
-                eco_topo.add_node(p[i],sw_instance)
+            else:  
+                log.debug("%s" % topo.node[p[i]].has_key('switch'))
+                log.debug("%s" % topo.node[p[i]])
+                sw_instance = topo.node[p[i]]['switch']
+                eco_topo.add_node(p[i], switch = sw_instance)
+    return True
+
+def _check_switch2(p):
+    global eco_topo
+    global topo
+    for i in range(len(p)):
+        if eco_topo.has_node(p[i]) is False:
+            if topo.has_node(p[i]) is False : return False
+            else:  
+                log.debug("%s" % topo.node[p[i]].has_key('switch'))
+                log.debug("%s" % topo.node[p[i]])
+                sw_instance = topo.node[p[i]]['switch']
+                eco_topo.add_node(p[i], switch = sw_instance)
     return True
 
 def handle_timeout(**kw):
@@ -452,32 +467,32 @@ class eco_topology(EventMixin):
 
         # create eco topology
         # TODO debug
-        temp1 = nx.Graph(topo)
-        temp2 = nx.minimum_spanning_tree(temp1)
-        eco_topo = nx.DiGraph(temp2)
-        monitor.notify_logical_instance(eco_topo)
+        #temp1 = nx.Graph(topo)
+        #temp2 = nx.minimum_spanning_tree(temp1)
+        #eco_topo = nx.DiGraph(temp2)
         
-        for e in topo.edges_iter():
-            if (topo.has_edge(e[0],e[1]) == True and eco_topo.has_edge(e[0],e[1]) == True):
-                if(topo[e[0]][e[1]]['port'] == eco_topo[e[0]][e[1]]['port']) == False:
-                    eco_topo.add_edge(e[0],e[1],port=topo[e[0]][e[1]]['port'])
-                else : continue
-            else : continue
+        #monitor.notify_logical_instance(eco_topo)
         
-        #print eco_topo.node
-        #print 'topo:', topo.edge
-        #print 'eco:', eco_topo.edge
-        remove_node = []
-        for n in eco_topo.nodes_iter():
-            physical_edge = topo.edges(n)
-            logical_edge = eco_topo.edges(n)
-            # fat treeからトポロジを吸収していく
-            if(len(physical_edge) == 6 and len(logical_edge)==1):
-		eco_topo.remove_edge(*logical_edge[0])
-                remove_node.append(n)
-        for n in remove_node:
-            eco_topo.remove_node(n)
-                
+        #for e in topo.edges_iter():
+        #    if (topo.has_edge(e[0],e[1]) == True and eco_topo.has_edge(e[0],e[1]) == True):
+        #        if(topo[e[0]][e[1]]['port'] == eco_topo[e[0]][e[1]]['port']) == False:
+        #            eco_topo.add_edge(e[0],e[1],port=topo[e[0]][e[1]]['port'])
+        #        else : continue
+        #    else : continue
+        
+        # remove_node = []
+        # for n in eco_topo.nodes_iter():
+        #     physical_edge = topo.edges(n)
+        #     logical_edge = eco_topo.edges(n)
+        #     # fat treeからトポロジを吸収していく
+        #     if(len(physical_edge) == 4 and len(logical_edge)==1):
+	# 	eco_topo.remove_edge(*logical_edge[0])
+        #         remove_node.append(n)
+        # for n in remove_node:
+        #     eco_topo.remove_node(n)
+        #log.debug("nodes= %s -> eco_nodes= %s" % (topo.nodes(),eco_topo.nodes()))
+        #log.debug("edges= %s-> eco_edges= %s" % (topo.edges(),eco_topo.edges()))
+                 
     def _handle_ConnectionUp(self, event):
         str_event_dpid = dpidToStr(event.dpid)
         if topo.has_node(str_event_dpid) == False:
@@ -491,11 +506,25 @@ class eco_topology(EventMixin):
             sw = topo.node[str_event_dpid]['switch']
             sw.connect(event.connection)
 
+def create_eco_topology():
+    global topo
+    k = 4
+    switchNum = k**3/4 + 1
+    p_edge_top = k**3/4 + 1 + k + k**2/2
+    p_edge_bottom = p_edge_top + k**2/2
+    
+    all_path = nx.shortest_path(topo,dpidToStr(switchNum))
+    for edge_num in range(p_edge_top,p_edge_bottom):
+        path = all_path[dpidToStr(edge_num)]
+        _check_switch2(path)
+        for s1,s2 in zip(path[:-1],path[1:]):
+            if _check_path(s1,s2)==False:
+                exit
+            
 def launch():
     global eco_topo
     global topo
     global monitor
-    global monitor2
     if 'openflow_discovery' not in core.components:
         import pox.openflow.Discovery as discovery
         core.registerNew(discovery.Discovery)
@@ -503,4 +532,4 @@ def launch():
     core.registerNew(eco_topology)
     monitor = monitor_thread(log,eco_topo,topo,5)
     monitor.start()
-
+    Timer(30,create_eco_topology)
