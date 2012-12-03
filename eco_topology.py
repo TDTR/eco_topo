@@ -32,7 +32,7 @@ from pox.lib.revent import *
 from pox.lib.recoco import Timer
 from collections import defaultdict
 #from pox.openflow.discovery import Discovery
-from eco_flow_table import FlowTable
+#from eco_flow_table import FlowTable
 from eco_discovery import Discovery
 from pox.lib.util import dpidToStr
 from pox.lib.util import strToDPID
@@ -511,4 +511,4 @@ def launch():
     core.registerNew(eco_subnetlogy)
     monitor = monitor_thread(log,eco_subnet,phy_topology,5)
     monitor.start()
-    Timer(30,create_eco_subnet)
+    Timer(60,create_eco_subnet)
