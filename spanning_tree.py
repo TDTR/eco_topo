@@ -28,8 +28,8 @@ def launch (forwarding = "eco"):
                         "@@@bold%(message)s@@@normal")
   from pox.core import core
   #import pox.openflow.discovery
-  import eco_flow_table
-  eco_flow_table.launch()
+  #import eco_flow_table
+  #eco_flow_table.launch()
   import eco_discovery
   eco_discovery.launch()
 
