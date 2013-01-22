@@ -511,8 +511,4 @@ def launch():
     core.registerNew(eco_subnetlogy)
     monitor = monitor_thread(log,eco_subnet,phy_topology,5)
     monitor.start()
-<<<<<<< HEAD
-    Timer(60,create_eco_topology)
-=======
     Timer(60,create_eco_subnet)
->>>>>>> refactor
