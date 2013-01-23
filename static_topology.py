@@ -80,11 +80,10 @@ def _calc_packing(p):
         
     return (BANDWIDTH -max(contention_list))
 
-def _get_raw_path(src,dst, flow_size):
-    
+def _get_raw_path(src,dst, flow_size, check_connectivity=0):
     def get_ecmp_path_list(topology,src,dst):
-        simple_paths_ = list(nx.shortest_paths(topology,source=dpidToStr(src.dpid),
-                                               target=dpidToStr(dst.dpid)))
+        simple_paths_= list(nx.shortest_paths(topology,source=dpidToStr(src.dpid),
+                            target = dpidToStr(dst.dpid)))
         return simple_paths_
 
     global eco_subnet
@@ -106,7 +105,11 @@ def _get_raw_path(src,dst, flow_size):
     # binに割り当て可能か確認する
     for i in range(len(path_list_)):
         if bin_content_[i] - flow_size < 0:
-            continue
+            if check_connectivity == CHECK_CONNECTIVITY:
+                log.info("overcommit is occur")
+                return path_list_[i]
+            else:
+                continue
         else:
             return path_list_[i]
 
@@ -149,28 +152,17 @@ def _init_check_switch(p):
                 sw_instance_ = phy_topology.node[p[i]]['switch']
                 eco_subnet.add_node(p[i], switch = sw_instance_)
     return True
-
-# # remove item from content_map 
-# def handle_timeout(**kw):
-#     global content_map
-#     log.debug("delete f_map %s->%s:%d" % (kw['sw1'],kw['sw2'],kw['f']))
-#     log.debug("f's type is %s"% type(kw['f']))
     
-#     # content_map[s1][s2]==flow_id を消す
-#     content_map[kw['sw1']][kw['sw2']].remove(kw['f'])
-    
-def _get_path(src,dst,final_port,flow_size = ITEM_SIZE):
+def _get_path(src,dst,final_port,flow_size = ITEM_SIZE,check_connectivity=UNCHECK_CONNECTIVITY):
     global flow_id
     global eco_subnet
     global phy_topology
-
-    #print '_get_path', src,dst,final_port
 
     if src == dst:
         path_ = [str(src)]
     else:
         # path <- return path list src to dst express str(dpid)
-        path_ = _get_raw_path(src, dst, flow_size)
+        path_ = _get_raw_path(src, dst, flow_size, check_connectivity)
         if path_ is None: return None
         
     if _check_switch(path_)==False:
@@ -185,9 +177,6 @@ def _get_path(src,dst,final_port,flow_size = ITEM_SIZE):
         content_map[s1][s2].append(flow_id)
         content_map[s2][s1].append(flow_id)
 
-        #Timer(HARD_TIMEOUT, handle_timeout, kw={'f':flow_id,'sw1':s1,'sw2':s2})
-        #Timer(HARD_TIMEOUT, handle_timeout, kw={'f':flow_id,'sw1':s2,'sw2':s1})
-       
     r_.append((path[-1], final_port))
 
     #    assert _check_path(r)
@@ -201,8 +190,8 @@ def _install(switch,port,match,buf=-1):
     msg_.match = match
     msg_.idle_timeout = IDLE_TIMEOUT
     msg_.hard_timeout = HARD_TIMEOUT
-    msg_.actions.append(of.ofp_action_output(port = port))
-    msg_.buffer_id = buf
+    #msg_.actions.append(of.ofp_action_output(port = port))
+    #msg_.buffer_id = buf
     switch.connection.send(msg_)
     
 def _install_path(p, match, buffer_id=-1):
@@ -216,48 +205,14 @@ def _install_path(p, match, buffer_id=-1):
     event = PathInstalled(p)
     core.static_topology.raiseEvent(event)
     
-def install_path(src_sw, dst_sw, last_port, match,flow_size):
+def install_path(src_sw, dst_sw, last_port, match,flow_size=ITEM_SIZE,
+                 check_connectivity=UNCHECK_CONNECTIVITY):
     # dst_sw is switch instance
     # print 'install_path', self,dst_sw
     global flow_id
-    p = _get_path(src_sw,dst_sw,last_port, flow_size)
+    p = _get_path(src_sw,dst_sw,last_port, flow_size, check_connectivity)
     if p is None:
         log.warning("Can't get from %s to %s", match.dl_src, match.dl_dst)
-        
-        # import pox.lib.packet as pkt
-        
-        # if (match.dl_type == pkt.ethernet.IP_TYPE and
-        #     event.parsed.find('ipv4')):
-        #     # It's IP -- let's send a destination unreachable
-        #     log.debug("Dest unreachable (%s -> %s)",
-        #               match.dl_src, match.dl_dst)
-            
-        #     from pox.lib.addresses import EthAddr
-        #     e = pkt.ethernet()
-        #     e.src = EthAddr(dpidToStr(src_sw.dpid)) #FIXME: Hmm...
-        #     e.dst = match.dl_src
-        #     e.type = e.IP_TYPE
-        #     ipp = pkt.ipv4()
-        #     ipp.protocol = ipp.ICMP_PROTOCOL
-        #     ipp.srcip = match.nw_dst #FIXME: Ridiculous
-        #     ipp.dstip = match.nw_src
-        #     icmp = pkt.icmp()
-        #     icmp.type = pkt.ICMP.TYPE_DEST_UNREACH
-        #     icmp.code = pkt.ICMP.CODE_UNREACH_HOST
-        #     orig_ip = event.parsed.find('ipv4')
-            
-        #     d = orig_ip.pack()
-        #     d = d[:orig_ip.hl * 4 + 8]
-        #     import struct
-        #     d = struct.pack("!HH", 0,0) + d #FIXME: MTU
-        #     icmp.payload = d
-        #     ipp.payload = icmp
-        #     e.payload = ipp
-        #     msg_ = of.ofp_packet_out()
-        #     msg_.actions.append(of.ofp_action_output(port = event.port))
-        #     msg_.data = e.pack()
-        #     src_sw.connection.send(msg_)
-        # return
 
     log.debug('will install this path:%s' %p)
     _install_path(p,match)
@@ -268,14 +223,58 @@ def install_path(src_sw, dst_sw, last_port, match,flow_size):
               match.dl_src,match.dl_dst,match.dl_type,len(p))
 
 def static_path_cal(tr_matrix):
-
     # トラフィックマトリックスをもとにして、パスをinstallする
-    for src in :
-        for dst in n:
-            
-    dest = mac_map[dst]
-    install_path(src_sw, dest[0], dest[1], match,flow_size)
-    # match オブジェクトの作成
+    for src in iter(ip_mac):
+        for dst in iter(ip_mac):
+            flow_size = tr_matrix[src][dst]
+            if flow_size == 0:
+                continue
+            else:
+                # create match object
+                match = of.ofp_match(dl_type = pkt.ethernet.IP_TYPE,dl_vlan= 65535,
+                                     dl_vlan_pcp=0,dl_src=src[0],dl_dst=dst[0],
+                                     nw_src=src[1],nw_dst=dst[1])
+                # エッジスイッチの呼び出し
+                src_loc = mac_map[src[0]]
+                dst_loc = mac_map[dst[0]]
+                install_path(src_loc[0], dst_loc[0], dst_loc[1], match,flow_size)
+
+def ensure_connectivity(tr_matrix):
+    for src in iter(ip_mac):
+        for dst in iter(ip_mac):
+            flow_size = tr_matrix[src][dst]
+            if flow_size != 0:
+                continue
+            else:
+                match = of.ofp_match(dl_type = pkt.ethernet.IP_TYPE,dl_vlan= 65535,
+                                     dl_vlan_pcp=0,dl_src=src[0],dl_dst=dst[0],
+                                     nw_src=src[1],nw_dst=dst[1])
+                # エッジスイッチの呼び出し
+                src_loc = mac_map[src[0]]
+                dst_loc = mac_map[dst[0]]
+                install_path(src_loc[0], dst_loc[0], dst_loc[1], match,
+                             check_connectivity=CHECK_CONNECTIVITY)
+                
+def generate_tr_matrix():
+    import json
+    f = open(TRAFFIC_FILE)
+    tr_matrix = json.read()
+    f.close()
+    return tr_matrix
+
+def calc_topology():
+    global eco_subnet
+    global content_map
+    global flow_map
+    global flow_id
+    
+    eco_subnet.clear()
+    content_map.clear()
+    flow_map.clear()
+    flow_id = -1
+    tr_matrix = generate_tr_matrix()
+    static_path_cal(tr_matrix)
+    ensure_connectivity(tr_matrix)
     
 class Switch(EventMixin):
     def __init__(self):

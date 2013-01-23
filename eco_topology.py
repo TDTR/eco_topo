@@ -23,7 +23,6 @@ This Program is prototype of master thesis toru-tu@naist
 Dependes on openflow.discovery
 Works with openflow.spanning_tree
 
-master
 """
 
 from pox.core import core
@@ -40,9 +39,8 @@ from PathInstalled import *
 import networkx as nx
 import threading
 import time
-#import logging
-#import logging.config
 from monitor_thread import *
+
 # experimental parameter is here.
 from variable_parameter import *
 
@@ -162,7 +160,7 @@ def _check_switch(p):
                 eco_subnet.add_node(p[i], switch = sw_instance_)
     return True
 
-def _check_switch2(p):
+def _init_check_switch(p):
     global eco_subnet
     global phy_topology
     for i in range(len(p)):
@@ -178,6 +176,7 @@ def handle_timeout(**kw):
     global content_map
     log.debug("delete f_map %s->%s:%d" % (kw['sw1'],kw['sw2'],kw['f']))
     log.debug("f's type is %s"% type(kw['f']))
+    
     # content_map[s1][s2]==flow_id を消す
     content_map[kw['sw1']][kw['sw2']].remove(kw['f'])
     
@@ -201,7 +200,7 @@ def _get_path(src,dst,final_port):
         exit 
     r_ = []
     
-    for s1,s2 in zip(path[:-1],path[1:]):
+    for s1,s2 in zip(path_[:-1],path_[1:]):
         if _check_path(s1,s2) == False: exit 
         ## 怪しい only one switch の場合エラー
         #port = eco_subnet[s1][s2].values
@@ -213,7 +212,7 @@ def _get_path(src,dst,final_port):
         Timer(HARD_TIMEOUT, handle_timeout, kw={'f':flow_id,'sw1':s1,'sw2':s2})
         Timer(HARD_TIMEOUT, handle_timeout, kw={'f':flow_id,'sw1':s2,'sw2':s1})
        
-    r_.append((path[-1], final_port))
+    r_.append((path_[-1], final_port))
 
     #    assert _check_path(r)
 
@@ -250,7 +249,7 @@ class Switch(EventMixin):
         self._install(src_sw,p[0][1], match, buffer_id)
 
         event = PathInstalled(p)
-        core.eco_subnetlogy.raiseEvent(event)
+        core.eco_topology.raiseEvent(event)
 
     def install_path(self, dst_sw, last_port, match, event):
         # dst_sw is switch instance
@@ -368,6 +367,7 @@ class Switch(EventMixin):
                 match = of.ofp_match.from_packet(packet)
                 flow_map[flow_id]=ITEM_SIZE
                 log.debug('flow_id %d ITEM_SIZE=%d' % (flow_id,flow_map[flow_id]))
+                log.debug('match info= %s ' , match.show() )
                 self.install_path(dest[0],dest[1],match,event)
                 
         
@@ -399,6 +399,7 @@ class Switch(EventMixin):
 class eco_topology(EventMixin):
     global phy_topology
     global eco_subnet
+
     _eventMixin_events = set([
         PathInstalled,
         ])
@@ -443,34 +444,6 @@ class eco_topology(EventMixin):
                 if flip(l) in core.openflow_discovery.adjacency:
                     phy_topology.add_edge(string_dpid1, string_dpid2, port=l.port1)
                     phy_topology.add_edge(string_dpid2, string_dpid1, port=l.port2)
-
-        # create eco phy_topologylogy
-        # TODO debug
-        #temp1 = nx.Graph(phy_topology)
-        #temp2 = nx.minimum_spanning_tree(temp1)
-        #eco_subnet = nx.DiGraph(temp2)
-        
-        #monitor.notify_logical_instance(eco_subnet)
-        
-        #for e in phy_topology.edges_iter():
-        #    if (phy_topology.has_edge(e[0],e[1]) == True and eco_subnet.has_edge(e[0],e[1]) == True):
-        #        if(phy_topology[e[0]][e[1]]['port'] == eco_subnet[e[0]][e[1]]['port']) == False:
-        #            eco_subnet.add_edge(e[0],e[1],port=phy_topology[e[0]][e[1]]['port'])
-        #        else : continue
-        #    else : continue
-        
-        # remove_node = []
-        # for n in eco_subnet.nodes_iter():
-        #     physical_edge = phy_topology.edges(n)
-        #     logical_edge = eco_subnet.edges(n)
-        #     # fat treeからトポロジを吸収していく
-        #     if(len(physical_edge) == 4 and len(logical_edge)==1):
-	# 	eco_subnet.remove_edge(*logical_edge[0])
-        #         remove_node.append(n)
-        # for n in remove_node:
-        #     eco_subnet.remove_node(n)
-        #log.debug("nodes= %s -> eco_nodes= %s" % (phy_topology.nodes(),eco_subnet.nodes()))
-        #log.debug("edges= %s-> eco_edges= %s" % (phy_topology.edges(),eco_subnet.edges()))
                  
     def _handle_ConnectionUp(self, event):
         str_event_dpid = dpidToStr(event.dpid)
@@ -495,7 +468,7 @@ def create_eco_subnet():
     all_path = nx.shortest_path(phy_topology,dpidToStr(switchNum))
     for edge_num in range(p_edge_top,p_edge_bottom):
         path = all_path[dpidToStr(edge_num)]
-        _check_switch2(path)
+        _init_check_switch(path)
         for s1,s2 in zip(path[:-1],path[1:]):
             if _check_path(s1,s2)==False:
                 exit
@@ -508,7 +481,7 @@ def launch():
         import pox.openflow.Discovery as discovery
         core.registerNew(discovery.Discovery)
 
-    core.registerNew(eco_subnetlogy)
+    core.registerNew(eco_topology)
     monitor = monitor_thread(log,eco_subnet,phy_topology,5)
     monitor.start()
-    Timer(60,create_eco_subnet)
+    Timer(30,create_eco_subnet)
