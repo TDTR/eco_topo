@@ -30,8 +30,6 @@ import pox.openflow.libopenflow_01 as of
 from pox.lib.revent import *
 from pox.lib.recoco import Timer
 from collections import defaultdict
-#from pox.openflow.discovery import Discovery
-#from eco_flow_table import FlowTable
 from eco_discovery import Discovery
 from pox.lib.util import dpidToStr
 from pox.lib.util import strToDPID
@@ -39,12 +37,17 @@ from PathInstalled import *
 import networkx as nx
 import threading
 import time
+import L2L3
+import os
+import csv
 from monitor_thread import *
-
 # experimental parameter is here.
 from variable_parameter import *
 
 log = core.getLogger()
+
+# ip_mac -map
+ip_mac = L2L3.L2L3()
 
 # physical topology graph
 phy_topology = nx.DiGraph()
@@ -254,14 +257,56 @@ def ensure_connectivity(tr_matrix):
                 dst_loc = mac_map[dst[0]]
                 install_path(src_loc[0], dst_loc[0], dst_loc[1], match,
                              check_connectivity=CHECK_CONNECTIVITY)
-                
-def generate_tr_matrix():
-    import json
-    f = open(TRAFFIC_FILE)
-    tr_matrix = json.read()
-    f.close()
+
+def _pickup_element_from_source(source_file,t, delta_t = 0.0):
+    element_list = []
+    #print source_file.name
+    for row in csv.reader(source_file):
+        if(row[0]=='start_epoch'): continue
+        #print 'start_time',row[0]
+        start_time = float(row[0])
+        
+        end_time = start_time+float(row[1])
+        #print 'end_time %f' % end_time
+        if(end_time - t > 0  and t - start_time>0):
+            element_list.append(row)
+
+    return element_list
+
+def gen_traffic_matrix(time,delta_t=0.0):
+    global ip_mac
+    
+    raw_tr_list = []
+    
+    # get raw  traffic info from file
+    for root, dirs, files in os.walk(DIR):
+        for file_name in files:
+            f = open(DIR+'/'+file_name)
+            raw_list = _pickup_element_from_source(f,time,delta_t=delta_t)
+            for element in raw_list:
+                raw_tr_list.append(element)
+            f.close()
+            
+    for i in range(len(raw_tr_list)):
+        src_ip = raw_tr_list[i][2]
+        dst_ip = raw_tr_list[i][3]
+        src_mac = ip_mac.get_mac_address(src_ip)
+        dst_mac = ip_mac.get_mac_address(dst_ip)
+        tr_matrix[(src_ip,src_mac)][(dst_ip,dst_mac)]+= FLOW_SIZE
+
     return tr_matrix
 
+def create_ip_mac_map():
+    global ip_mac
+    for i in range(POD_NUM**3/4):
+        mac = ''
+        if i < 16:
+            mac = '00:00:00:00:00:0' + '%x' % i
+        else :
+            mac = '00:00:00:00:00:' + '%x' % i
+        ip = '10.0.0.'+ '%d' % i
+        ip_mac.set_entry(ip,mac)
+    
 def calc_topology():
     global eco_subnet
     global content_map
@@ -272,7 +317,8 @@ def calc_topology():
     content_map.clear()
     flow_map.clear()
     flow_id = -1
-    tr_matrix = generate_tr_matrix()
+    time = BASE_TIME
+    tr_matrix = generate_tr_matrix(time)
     static_path_cal(tr_matrix)
     ensure_connectivity(tr_matrix)
     
@@ -472,6 +518,8 @@ def launch():
         core.registerNew(discovery.Discovery)
 
     core.registerNew(static_topology)
+    create_ip_mac_map()
     monitor = monitor_thread(log,eco_subnet,phy_topology,5)
     monitor.start()
-    #Timer(60,create_eco_subnet)
+    
+    Timer(60,calc_topology)
