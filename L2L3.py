@@ -4,7 +4,22 @@
 class L2L3:
     def __init__(self):
         self.list = []
-        
+        self.index = 0
+
+    def __iter__(self):
+        return self
+
+    def __str__(self):
+        return self.show_ip()
+
+    def next(self):
+        if self.index >= len(self.list):
+            self.index = 0
+            raise StopIteration
+        result = self.list[self.index]
+        self.index += 1
+        return result
+    
     def show_ip(self):
         for iterator in self.list:
             print iterator[0]
@@ -14,8 +29,10 @@ class L2L3:
             print iterator[1]
 
     def set_entry(self,ip,mac):
+        print ip,"-",mac
         self.list.append((ip,mac))
-        return True
+        print self.list
+    
     def remove_entry(self,ip,mac):
         try:
             self.list.index((ip,mac))

@@ -40,6 +40,8 @@ def launch (forwarding = "eco"):
     import pox.forwarding.l2_multi as fw
   elif forwarding.lower() == "l2_learning":
     import pox.forwarding.l2_learning as fw 
+  elif forwarding.lower() == "static":
+    import static_topology as fw
   else:
     import eco_topology as fw
   core.getLogger().debug("Using forwarding: %s", fw.__name__)

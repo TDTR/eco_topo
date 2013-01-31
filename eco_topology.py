@@ -40,6 +40,7 @@ import networkx as nx
 import threading
 import time
 from monitor_thread import *
+from monitor_linkpacking_thread_periodic import *
 
 # experimental parameter is here.
 from variable_parameter import *
@@ -61,6 +62,7 @@ content_map = defaultdict(lambda:defaultdict(lambda:list()))
 # Thread class
 # output number of edges and nodes to stdout 
 monitor  = None
+monitor_link = None
 
 # give each flow using flow identification
 flow_id = -1
@@ -477,6 +479,9 @@ def launch():
     global eco_subnet
     global phy_topology
     global monitor
+    global monitor_link
+    global flow_map
+    global content_map
     if 'openflow_discovery' not in core.components:
         import pox.openflow.Discovery as discovery
         core.registerNew(discovery.Discovery)
@@ -484,4 +489,7 @@ def launch():
     core.registerNew(eco_topology)
     monitor = monitor_thread(log,eco_subnet,phy_topology,5)
     monitor.start()
+    monitor_link = monitor_linkpacking_thread(log,content_map,flow_map,eco_subnet,5)
+    monitor_link.start()
+
     Timer(30,create_eco_subnet)

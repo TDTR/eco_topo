@@ -13,7 +13,7 @@ class monitor_thread(threading.Thread):
         self.logical = logical
         self.physical = physical
         self.interval = interval
-
+        
     def run(self):
         self.logging.debug("Start monitor-thread.")
         while True:
