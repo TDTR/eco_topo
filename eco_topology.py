@@ -367,7 +367,10 @@ class Switch(EventMixin):
                 flow_id += 1
                 dest = mac_map[packet.dst]
                 match = of.ofp_match.from_packet(packet)
-                flow_map[flow_id]=ITEM_SIZE
+                if match.dl_type == 0x0806:
+                    flow_map[flow_id]=0
+                else:
+                    flow_map[flow_id]=ITEM_SIZE
                 log.debug('flow_id %d ITEM_SIZE=%d' % (flow_id,flow_map[flow_id]))
                 log.debug('match info= %s ' , match.show() )
                 self.install_path(dest[0],dest[1],match,event)
@@ -492,4 +495,4 @@ def launch():
     monitor_link = monitor_linkpacking_thread(log,content_map,flow_map,eco_subnet,5)
     monitor_link.start()
 
-    Timer(30,create_eco_subnet)
+    Timer(50,create_eco_subnet)

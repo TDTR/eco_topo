@@ -27,20 +27,25 @@ Works with openflow.spanning_tree
 
 from pox.core import core
 import pox.openflow.libopenflow_01 as of
+import pox.lib.packet as pkt
 from pox.lib.revent import *
 from pox.lib.recoco import Timer
 from collections import defaultdict
 from eco_discovery import Discovery
 from pox.lib.util import dpidToStr
 from pox.lib.util import strToDPID
+from pox.lib.addresses import IPAddr,EthAddr
 from PathInstalled import *
 import networkx as nx
 import threading
 import time
 import L2L3
 import os
+import random
 import csv
+import itertools
 from monitor_thread import *
+from monitor_linkpacking_thread import *
 # experimental parameter is here.
 from variable_parameter import *
 
@@ -64,6 +69,7 @@ content_map = defaultdict(lambda:defaultdict(lambda:list()))
 # Thread class
 # output number of edges and nodes to stdout 
 monitor  = None
+monitor_link  = None
 
 # give each flow using flow identification
 flow_id = -1
@@ -74,48 +80,62 @@ def _calc_packing(p):
     contention_list_ = []
     
     for s1,s2 in zip(p[:-1],p[1:]):
-        contension_ = 0
+        contention_ = 0
         # f_list_ = map(int,content_map[s1][s2])
         f_list_ = content_map[s1][s2]
-        for f in f_list:
+        for f in f_list_:
             contention_ += flow_map[f]
-        contention_list_.append(contension_)
-        
-    return (BANDWIDTH -max(contention_list))
+        contention_list_.append(contention_)
+
+    result_packing_ = BANDWIDTH -max(contention_list_)
+    return result_packing_
 
 def _get_raw_path(src,dst, flow_size, check_connectivity=0):
     def get_ecmp_path_list(topology,src,dst):
-        simple_paths_= list(nx.shortest_paths(topology,source=dpidToStr(src.dpid),
-                            target = dpidToStr(dst.dpid)))
+        simple_paths_= list(nx.all_shortest_paths(topology,source=dpidToStr(src.dpid),
+                            target=dpidToStr(dst.dpid)))
+        return simple_paths_
+    def get_path_list(topology,src,dst):
+        shortest_path_len_ = nx.dijkstra_path_length(topology,dpidToStr(src.dpid),dpidToStr(dst.dpid))
+        simple_paths_ = list(nx.all_simple_paths(topology,source=dpidToStr(src.dpid),
+                                             target=dpidToStr(dst.dpid), cutoff = shortest_path_len_ + CUTOFF))
         return simple_paths_
 
     global eco_subnet
     global phy_topology
+    log.debug("src.dpid: %s  dst.dpid: %s",dpidToStr(src.dpid),dpidToStr(dst.dpid))
 
-    path_list_ = get_ecmp_path_list(phy_topology,src,dst)
-        
+    if check_connectivity == CHECK_CONNECTIVITY:
+        path_list_ = get_ecmp_path_list(eco_subnet,src,dst)
+    else:
+        path_list_ = get_ecmp_path_list(phy_topology,src,dst)
+    
     # get max contention value each path
     bin_content_ =[]
     for i in range(len(path_list_)):
         bin_content_.append(_calc_packing(path_list_[i]))
 
-    if max(bin_content_) < 0:
-        log.info("All path cannot assign flow")
+    if max(bin_content_) <= 0:
+        log.debug("All path cannot assign flow:Search other flow")
+        path_list_ = get_path_list(phy_topology,src,dst)
+        bin_content_ =[]
+        for i in range(len(path_list_)):
+            bin_content_.append(_calc_packing(path_list_[i]))
     
-    log.debug("number_of_bin_content_ = %s" % len(bin_content_))
+    log.debug("number_of path = %s" % len(bin_content_))
     log.debug("each path bin_content_ = %s" % bin_content_)
     
     # binに割り当て可能か確認する
-    for i in range(len(path_list_)):
-        if bin_content_[i] - flow_size < 0:
-            if check_connectivity == CHECK_CONNECTIVITY:
-                log.info("overcommit is occur")
-                return path_list_[i]
-            else:
+    if check_connectivity == CHECK_CONNECTIVITY:
+        path_select_index_ = random.randint(0,(len(path_list_)-1))
+        return path_list_[path_select_index_]
+    else:
+        for i in range(len(path_list_)):
+            if bin_content_[i] - flow_size < 0:
                 continue
-        else:
-            return path_list_[i]
-
+            else:
+                return path_list_[i]
+   
 def _check_path(src,dst):
     global eco_subnet
     global phy_topology
@@ -135,7 +155,9 @@ def _check_path(src,dst):
 def _check_switch(p):
     global eco_subnet
     global phy_topology
-    for i in range(len(p) -1):
+    log.debug("IN _init_check_switch")
+    #for i in range(len(p) -1):         
+    for i in range(len(p)):
         if eco_subnet.has_node(p[i]) is False:
             if phy_topology.has_node(p[i]) is False : return False
             else:
@@ -148,6 +170,7 @@ def _init_check_switch(p):
     global eco_subnet
     global phy_topology
     for i in range(len(p)):
+        log.debug("IN _init_check_switch")
         if eco_subnet.has_node(p[i]) is False:
             if phy_topology.has_node(p[i]) is False : return False
             else:
@@ -161,6 +184,7 @@ def _get_path(src,dst,final_port,flow_size = ITEM_SIZE,check_connectivity=UNCHEC
     global eco_subnet
     global phy_topology
 
+    path_= []
     if src == dst:
         path_ = [str(src)]
     else:
@@ -173,14 +197,14 @@ def _get_path(src,dst,final_port,flow_size = ITEM_SIZE,check_connectivity=UNCHEC
 
     r_ = []
     # Create tuple ((sw,port),()....)
-    for s1,s2 in zip(path[:-1],path[1:]):
+    for s1,s2 in zip(path_[:-1],path_[1:]):
         if _check_path(s1,s2) == False: exit     
         port_ = eco_subnet[s1][s2]['port']
         r_.append((s1,port_))
         content_map[s1][s2].append(flow_id)
         content_map[s2][s1].append(flow_id)
 
-    r_.append((path[-1], final_port))
+    r_.append((path_[-1], final_port))
 
     #    assert _check_path(r)
 
@@ -221,43 +245,74 @@ def install_path(src_sw, dst_sw, last_port, match,flow_size=ITEM_SIZE,
     _install_path(p,match)
 
     flow_id += 1
-    flow_map[flow_id]=flow_size
+    if (check_connectivity == UNCHECK_CONNECTIVITY):
+        flow_map[flow_id]=flow_size + MARGIN_SIZE
+    else:
+        flow_map[flow_id]=flow_size
     log.debug("Installing path for %s -> %s %04x (%i hops)",
               match.dl_src,match.dl_dst,match.dl_type,len(p))
 
+def hostip_to_edge_dpid(ip_address):
+    dot_divided_ = ip_address.split('.')
+    host_address_ = int(dot_divided_[-1])
+    dpid = (POD_NUM + POD_NUM**3/4 + POD_NUM**2/2 + 1)+host_address_/(POD_NUM/2)
+    return dpid
+
 def static_path_cal(tr_matrix):
+    global ip_mac
+    
+    log.debug("In static path calcuration")
     # トラフィックマトリックスをもとにして、パスをinstallする
-    for src in iter(ip_mac):
-        for dst in iter(ip_mac):
-            flow_size = tr_matrix[src][dst]
-            if flow_size == 0:
-                continue
-            else:
-                # create match object
-                match = of.ofp_match(dl_type = pkt.ethernet.IP_TYPE,dl_vlan= 65535,
-                                     dl_vlan_pcp=0,dl_src=src[0],dl_dst=dst[0],
-                                     nw_src=src[1],nw_dst=dst[1])
-                # エッジスイッチの呼び出し
-                src_loc = mac_map[src[0]]
-                dst_loc = mac_map[dst[0]]
-                install_path(src_loc[0], dst_loc[0], dst_loc[1], match,flow_size)
+    for src,dst in itertools.product(ip_mac,ip_mac):
+        flow_size = tr_matrix[src][dst]
+        if flow_size == 0:
+            continue
+        else:
+            log.debug("src:%s, dst:%s",src,dst)
+            # create match object
+            match = of.ofp_match(dl_type = pkt.ethernet.IP_TYPE,dl_vlan= 65535,
+                                 dl_vlan_pcp=0,dl_src=src[1],dl_dst=dst[1])
+                                 
+            match.nw_src = (IPAddr(src[0]))
+            match.nw_dst = (IPAddr(dst[0]))
+            match.dl_src = (EthAddr(src[1]))
+            match.dl_dst = (EthAddr(dst[1]))
+            #dpid_src = hostip_to_edge_dpid(src[0])
+            #dpid_dst = hostip_to_edge_dpid(dst[0])
+            
+            # エッジスイッチの呼び出し
+            #src_loc = mac_map[dpidToStr(dpid_src)]
+            #dst_loc = mac_map[dpidToStr(dpid_dst)]
+            src_loc = mac_map[src[1]]
+            dst_loc = mac_map[dst[1]]
+            
+            install_path(src_loc[0], dst_loc[0], dst_loc[1], match,flow_size)
+        
+    log.debug("End static path calcuration")
 
 def ensure_connectivity(tr_matrix):
-    for src in iter(ip_mac):
-        for dst in iter(ip_mac):
-            flow_size = tr_matrix[src][dst]
-            if flow_size != 0:
-                continue
-            else:
-                match = of.ofp_match(dl_type = pkt.ethernet.IP_TYPE,dl_vlan= 65535,
-                                     dl_vlan_pcp=0,dl_src=src[0],dl_dst=dst[0],
-                                     nw_src=src[1],nw_dst=dst[1])
-                # エッジスイッチの呼び出し
-                src_loc = mac_map[src[0]]
-                dst_loc = mac_map[dst[0]]
-                install_path(src_loc[0], dst_loc[0], dst_loc[1], match,
-                             check_connectivity=CHECK_CONNECTIVITY)
+    global ip_mac
+    log.debug("In ensure connectivity")
 
+    for src,dst in itertools.product(ip_mac,ip_mac):
+        flow_size = tr_matrix[src][dst]
+        if flow_size != 0:
+            continue
+        else:
+            match = of.ofp_match(dl_type = pkt.ethernet.IP_TYPE,dl_vlan= 65535,
+                                 dl_vlan_pcp=0)
+            match.nw_src =(IPAddr(src[0]))
+            match.dl_src = (EthAddr(src[1]))
+            match.nw_dst=(IPAddr(dst[0]))
+            match.dl_dst = (EthAddr(dst[1]))
+            
+            # エッジスイッチの呼び出し
+            src_loc = mac_map[src[1]]
+            dst_loc = mac_map[dst[1]]
+            install_path(src_loc[0], dst_loc[0], dst_loc[1], match,flow_size=0,
+                             check_connectivity=CHECK_CONNECTIVITY)
+    log.debug("End ensure connectivity")
+    
 def _pickup_element_from_source(source_file,t, delta_t = 0.0):
     element_list = []
     #print source_file.name
@@ -277,6 +332,7 @@ def gen_traffic_matrix(time,delta_t=0.0):
     global ip_mac
     
     raw_tr_list = []
+    tr_matrix = defaultdict(lambda:defaultdict(lambda:0))
     
     # get raw  traffic info from file
     for root, dirs, files in os.walk(DIR):
@@ -286,19 +342,21 @@ def gen_traffic_matrix(time,delta_t=0.0):
             for element in raw_list:
                 raw_tr_list.append(element)
             f.close()
-            
+
     for i in range(len(raw_tr_list)):
         src_ip = raw_tr_list[i][2]
         dst_ip = raw_tr_list[i][3]
         src_mac = ip_mac.get_mac_address(src_ip)
         dst_mac = ip_mac.get_mac_address(dst_ip)
-        tr_matrix[(src_ip,src_mac)][(dst_ip,dst_mac)]+= FLOW_SIZE
+        tr_matrix[(src_ip,src_mac)][(dst_ip,dst_mac)]+= ITEM_SIZE
+        #tr_matrix[(dst_ip,dst_mac)][(src_ip,src_mac)]+= ITEM_SIZE
 
+    log.debug("End gen_traffic_matrix")
     return tr_matrix
 
 def create_ip_mac_map():
     global ip_mac
-    for i in range(POD_NUM**3/4):
+    for i in range(1,POD_NUM**3/4+1):
         mac = ''
         if i < 16:
             mac = '00:00:00:00:00:0' + '%x' % i
@@ -306,7 +364,22 @@ def create_ip_mac_map():
             mac = '00:00:00:00:00:' + '%x' % i
         ip = '10.0.0.'+ '%d' % i
         ip_mac.set_entry(ip,mac)
-    
+
+def create_mac_map():
+    global mac_map
+    global phy_topology
+    host_num = 1
+    for host_num in range(1,POD_NUM**3/4+1):
+        if host_num < 16:
+            dl_src = "00:00:00:00:00:0" + '%x' % host_num
+        else:
+            dl_src = "00:00:00:00:00:" + '%x' % host_num
+        port = (host_num-1) % (POD_NUM/2) + POD_NUM/2
+        switch_dpid =(POD_NUM+POD_NUM**3/4+POD_NUM**2/2 + 1)+(host_num-1)/(POD_NUM/2)
+        sw_instance_ = phy_topology.node[dpidToStr(switch_dpid)]['switch']
+        mac_map[dl_src] =(sw_instance_,port)
+        
+        
 def calc_topology():
     global eco_subnet
     global content_map
@@ -318,9 +391,11 @@ def calc_topology():
     flow_map.clear()
     flow_id = -1
     time = BASE_TIME
-    tr_matrix = generate_tr_matrix(time)
+    tr_matrix = gen_traffic_matrix(time)
     static_path_cal(tr_matrix)
     ensure_connectivity(tr_matrix)
+    monitor_link = monitor_linkpacking_thread(log,content_map,flow_map,eco_subnet)
+    monitor_link.start()
     
 class Switch(EventMixin):
     def __init__(self):
@@ -353,29 +428,29 @@ class Switch(EventMixin):
                 event.ofp.buffer_id = -1
                 msg_.in_port = event.port
                 self.connection.send(msg_)            
-            
         packet = event.parsed
         if packet.src.isMulticast() == True:
+            
             flood()
             return
         else :
+            loc = (self,event.port)
+            oldloc = mac_map.get(packet.src)
+            
+            if packet.type == packet.LLDP_TYPE:
+                drop()
+                return
+            log.debug("packet:src= %s packet:dst= %s / (loc,oldloc)= (%s,%s) ",packet.src,packet.dst,loc,oldloc)
+            
+            if oldloc is None:
+                if packet.src.isMulticast() == False:
+                    mac_map[packet.src] = loc #learn position for ethaddr
+                    log.debug("Learned %s at %s.%i",packet.src, loc[0],loc[1])
+                    
             drop()
             return
         
-        # # loc = (switch, port)
-        # loc = (self,event.port)
-        # oldloc = mac_map.get(packet.src)
-
-        # if packet.type == packet.LLDP_TYPE:
-        #     drop()
-        #     return
-        
-        # log.debug("packet:src= %s packet:dst= %s / (loc,oldloc)= (%s,%s) ",packet.src,packet.dst,loc,oldloc)
-        
-        # if oldloc is None:
-        #     if packet.src.isMulticast() == False:
-        #         mac_map[packet.src] = loc #learn position for ethaddr
-        #         log.debug("Learned %s at %s.%i",packet.src, loc[0],loc[1])
+        # loc = (switch, port)
         # elif oldloc != loc:
         #     # ethaddr seen at different place
         #     # eco_subnet[] is MultiGraph().neighbors(n)
@@ -459,7 +534,7 @@ class static_topology(EventMixin):
         # index = str(dpid) , sw=Switch 
         for index,sw in phy_topology.nodes_iter(data=True):
             sw.values()[0].connection.send(clear)
-        flow_map.clear()
+        #flow_map.clear()
         
         if event.removed:
             if l.dpid2 in phy_topology[string_dpid1]:
@@ -513,6 +588,8 @@ def launch():
     global eco_subnet
     global phy_topology
     global monitor
+    global monitor_link
+    global mac_map
     if 'openflow_discovery' not in core.components:
         import pox.openflow.Discovery as discovery
         core.registerNew(discovery.Discovery)
@@ -521,5 +598,6 @@ def launch():
     create_ip_mac_map()
     monitor = monitor_thread(log,eco_subnet,phy_topology,5)
     monitor.start()
-    
-    Timer(60,calc_topology)
+    Timer(20,create_mac_map)
+    #log.debug("%s", mac_map)
+    Timer(45,calc_topology)

@@ -20,7 +20,7 @@ class monitor_linkpacking_thread(threading.Thread):
         link_usage.clear()
         self.logging.debug("LinkUsage calc IN")
         for src,dst in nx.edges_iter(self.topology):
-            self.logging.debug("LinkUsage calc %s -> %s",src,dst)
+            #self.logging.debug("LinkUsage calc %s -> %s",src,dst)
             f_list_ = self.bin_content[src][dst]
             contention_ = 0
             for f in f_list_:
