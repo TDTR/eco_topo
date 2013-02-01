@@ -495,4 +495,4 @@ def launch():
     monitor_link = monitor_linkpacking_thread(log,content_map,flow_map,eco_subnet,5)
     monitor_link.start()
 
-    Timer(50,create_eco_subnet)
+    Timer(30,create_eco_subnet)

@@ -600,4 +600,4 @@ def launch():
     monitor.start()
     Timer(20,create_mac_map)
     #log.debug("%s", mac_map)
-    Timer(45,calc_topology)
+    Timer(30,calc_topology)

@@ -9,7 +9,7 @@ MARGIN_SIZE = 20
 IDLE_TIMEOUT = 10
 HARD_TIMEOUT = 20
 CUTOFF = 2
-POD_NUM = 8
+POD_NUM = 4
 
 UNCHECK_CONNECTIVITY = 0
 CHECK_CONNECTIVITY = 1
@@ -26,5 +26,12 @@ CHECK_CONNECTIVITY = 1
 #DIR = u'/home/toru-tu/pox/ext/pod8/off'
 #BASE_TIME = 1359434140.945879
 
-DIR = u'/home/toru-tu/pox/ext/pod8/on'
-BASE_TIME = 1359431034.10000
+#DIR = u'/home/toru-tu/pox/ext/pod8/on'
+#BASE_TIME = 1359431034.10000
+
+#DIR = u'/home/toru-tu/pox/ext/pod4/on'
+#BASE_TIME = 1359713249.00000
+
+DIR = u'/home/toru-tu/pox/ext/pod4/off'
+BASE_TIME = 1359709300.10000
+
