@@ -36,6 +36,7 @@ from pox.lib.util import dpidToStr
 from pox.lib.util import strToDPID
 from pox.lib.addresses import IPAddr,EthAddr
 from PathInstalled import *
+from TimeMeasure import MeasureAverage
 import networkx as nx
 import threading
 import time
@@ -385,17 +386,26 @@ def calc_topology():
     global content_map
     global flow_map
     global flow_id
+    TM = MeasureAverage()
+    for i in range(100):
+        eco_subnet.clear()
+        content_map.clear()
+        flow_map.clear()
+        flow_id = -1
+        base_time = BASE_TIME
+        tr_matrix = gen_traffic_matrix(base_time)
+        c1 = time.clock()
+        static_path_cal(tr_matrix)
+        ensure_connectivity(tr_matrix)
+        c2 = time.clock()
+        c = c2-c1
+        #log.info("processing : %s " % str(float(c2-c1)))
+        TM.add_measured(c)
+        log.info("now calc ... index %4d"n % i)
+    log.info("calcuration time: [exe]/[avg]/[MIN]/[MAX]=(%f/%f/%f/%f)" % (c,TM.return_average(),TM.return_min(),TM.return_max()))
     
-    eco_subnet.clear()
-    content_map.clear()
-    flow_map.clear()
-    flow_id = -1
-    time = BASE_TIME
-    tr_matrix = gen_traffic_matrix(time)
-    static_path_cal(tr_matrix)
-    ensure_connectivity(tr_matrix)
-    monitor_link = monitor_linkpacking_thread(log,content_map,flow_map,eco_subnet)
-    monitor_link.start()
+        #monitor_link = monitor_linkpacking_thread(log,content_map,flow_map,eco_subnet)
+        #monitor_link.start()
     
 class Switch(EventMixin):
     def __init__(self):
@@ -405,8 +415,8 @@ class Switch(EventMixin):
         self._listeners = None
 
     def __repr__(self):
-        return dpidToStr(self.dpid)
-
+        return dpidToStr(self.dpid
+)
     
     def _handle_PacketIn(self, event):
         global flow_id
@@ -596,8 +606,8 @@ def launch():
 
     core.registerNew(static_topology)
     create_ip_mac_map()
-    monitor = monitor_thread(log,eco_subnet,phy_topology,5)
-    monitor.start()
+    #monitor = monitor_thread(log,eco_subnet,phy_topology,5)
+    #monitor.start()
     Timer(20,create_mac_map)
     #log.debug("%s", mac_map)
-    Timer(30,calc_topology)
+    Timer(40,calc_topology)

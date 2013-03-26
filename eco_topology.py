@@ -41,6 +41,7 @@ import threading
 import time
 from monitor_thread import *
 from monitor_linkpacking_thread_periodic import *
+from TimeMeasure import MeasureAverage
 
 # experimental parameter is here.
 from variable_parameter import *
@@ -63,7 +64,7 @@ content_map = defaultdict(lambda:defaultdict(lambda:list()))
 # output number of edges and nodes to stdout 
 monitor  = None
 monitor_link = None
-
+TM = MeasureAverage()
 # give each flow using flow identification
 flow_id = -1
 # [flow_id]-> size
@@ -304,6 +305,7 @@ class Switch(EventMixin):
     def _handle_PacketIn(self, event):
         global flow_id
         global eco_subnet
+        global TM
 
         def flood():
             """ Flooding the packet"""
@@ -373,9 +375,16 @@ class Switch(EventMixin):
                     flow_map[flow_id]=ITEM_SIZE
                 log.debug('flow_id %d ITEM_SIZE=%d' % (flow_id,flow_map[flow_id]))
                 log.debug('match info= %s ' , match.show() )
+
+                c1 = time.clock()
                 self.install_path(dest[0],dest[1],match,event)
+                c2 = time.clock()
+                c = c2-c1
+                TM.add_measured(c)
+                if TM.index < 10000:
+                    log.info("calcuration time: [exe]/[avg]/[MIN]/[MAX]=(%f/%f/%f/%f)" % (c,TM.return_average(),TM.return_min(),TM.return_max()))
                 
-        
+                    
     def disconnect(self):
         if self.connection is not None:
             log.debug("Disconnect %s " % (self.connection,))
@@ -492,7 +501,7 @@ def launch():
     core.registerNew(eco_topology)
     monitor = monitor_thread(log,eco_subnet,phy_topology,5)
     monitor.start()
-    monitor_link = monitor_linkpacking_thread(log,content_map,flow_map,eco_subnet,5)
-    monitor_link.start()
+    #monitor_link = monitor_linkpacking_thread(log,content_map,flow_map,eco_subnet,5)
+    #monitor_link.start()
 
     Timer(30,create_eco_subnet)

@@ -4,7 +4,7 @@
 BANDWIDTH = 1000
 ITEM_SIZE = 5
 
-MARGIN_SIZE = 20
+MARGIN_SIZE = 10
 
 IDLE_TIMEOUT = 10
 HARD_TIMEOUT = 20
@@ -19,8 +19,8 @@ CHECK_CONNECTIVITY = 1
 #BASE_TIME = 1359364155.369737
 
 #pod6 mu6
-#DIR = u'/home/toru-tu/pox/ext/pod6/on'
-#BASE_TIME = 1359366053.062291
+DIR = u'/home/toru-tu/pox/ext/pod6/on'
+BASE_TIME = 1359366053.062291
 
 
 #DIR = u'/home/toru-tu/pox/ext/pod8/off'
@@ -32,6 +32,6 @@ CHECK_CONNECTIVITY = 1
 #DIR = u'/home/toru-tu/pox/ext/pod4/on'
 #BASE_TIME = 1359713249.00000
 
-DIR = u'/home/toru-tu/pox/ext/pod4/off'
-BASE_TIME = 1359709300.10000
+#DIR = u'/home/toru-tu/pox/ext/pod4/off'
+#BASE_TIME = 1359709300.10000
 
